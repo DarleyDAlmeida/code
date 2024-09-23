@@ -1,84 +1,151 @@
-#include <time.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <sstream>
+#include <cmath>
+#include <cstdlib>
+#include <ctime>
+#include <iomanip>
+#include <iostream>
+#include <mpi.h>
 
-#include "mpi.h"
+int main ( int argc, char *argv[] );
+int prime_number ( int n, int id, int p );
+void timestamp ( );
 
-#define N 2000
-/* number of rows and columns in matrix */
-MPI_Status status;
-double a[N][N],b[N][N],c[N][N];
-main(int argc, char **argv)
+int main ( int argc, char *argv[] )
 {
-int numtasks,taskid,numworkers,source,dest,rows,offset,i,j,k;
-double t1, t2;
-struct timeval start, stop;
-MPI_Init(&argc, &argv);
-MPI_Comm_rank(MPI_COMM_WORLD, &taskid);
-MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
-numworkers = numtasks-1;
-/*---------------------------- master ----------------------------*/
-if (taskid == 0) {
-t1 = MPI_Wtime();
-for (i=0; i<N; i++) {
-for (j=0; j<N; j++) {
-a[i][j]= 1.0;
-b[i][j]= 2.0;
+    int id;
+    int ierr;
+    int n;
+    int n_factor;
+    int n_hi;
+    int n_lo;
+    int p;
+    int primes;
+    int primes_part;
+    double wtime;
+
+    n_lo = 1;
+    n_hi = 1048576;
+    n_factor = 2;
+
+    // Inicialização do MPI.
+    ierr = MPI_Init ( &argc, &argv );
+    if ( ierr != MPI_SUCCESS )
+    {
+        std::cerr << "MPI_Init retornou código de erro " << ierr << std::endl;
+        exit ( 1 );
+    }
+
+    // Obter o número de processos.
+    ierr = MPI_Comm_size ( MPI_COMM_WORLD, &p );
+    if ( ierr != MPI_SUCCESS )
+    {
+        std::cerr << "MPI_Comm_size retornou código de erro " << ierr << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, ierr);
+    }
+
+    // Determinar o rank deste processo.
+    ierr = MPI_Comm_rank ( MPI_COMM_WORLD, &id );
+    if ( ierr != MPI_SUCCESS )
+    {
+        std::cerr << "MPI_Comm_rank retornou código de erro " << ierr << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, ierr);
+    }
+
+    if ( id == 0 )
+    {
+        timestamp ( );
+        std::cout << "\n";
+        std::cout << "PRIME_MPI\n";
+        std::cout << "  Versão em C++/MPI\n";
+        std::cout << "\n";
+        std::cout << "  Um programa exemplo em MPI para contar o número de primos.\n";
+        std::cout << "  O número de processos é " << p << "\n";
+        std::cout << "\n";
+        std::cout << "     N           Pi          Tempo\n";
+        std::cout << "\n";
+    }
+
+    n = n_lo;
+    while ( n <= n_hi )
+    {
+        if ( id == 0 )
+        {
+            wtime = MPI_Wtime ( );
+        }
+
+        ierr = MPI_Bcast ( &n, 1, MPI_INT, 0, MPI_COMM_WORLD );
+        if ( ierr != MPI_SUCCESS )
+        {
+            std::cerr << "MPI_Bcast retornou código de erro " << ierr << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, ierr);
+        }
+
+        primes_part = prime_number ( n, id, p );
+
+        ierr = MPI_Reduce ( &primes_part, &primes, 1, MPI_INT, MPI_SUM, 0,
+            MPI_COMM_WORLD );
+        if ( ierr != MPI_SUCCESS )
+        {
+            std::cerr << "MPI_Reduce retornou código de erro " << ierr << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, ierr);
+        }
+
+        if ( id == 0 )
+        {
+            wtime = MPI_Wtime ( ) - wtime;
+            std::cout << "  " << std::setw(10) << n
+                      << "  " << std::setw(10) << primes
+                      << "  " << std::setw(12) << wtime << "\n";
+        }
+
+        n = n * n_factor;
+    }
+
+    // Finalização do MPI.
+    ierr = MPI_Finalize ( );
+    if ( ierr != MPI_SUCCESS )
+    {
+        std::cerr << "MPI_Finalize retornou código de erro " << ierr << std::endl;
+        exit ( 1 );
+    }
+
+    // Encerramento.
+    if ( id == 0 )
+    {
+        std::cout << "\n";
+        std::cout << "PRIME_MPI - Processo mestre:\n";
+        std::cout << "  Execução finalizada normalmente.\n";
+        std::cout << "\n";
+        timestamp ( );
+    }
+    return 0;
 }
-}
-//gettimeofday(&start, 0);
-/* send matrix data to the worker tasks */
-rows = N/numworkers;
-offset = 0;
-for (dest=1; dest<=numworkers; dest++)
+
+int prime_number ( int n, int id, int p )
 {
-MPI_Send(&offset, 1, MPI_INT, dest, 1, MPI_COMM_WORLD);
-MPI_Send(&rows, 1, MPI_INT, dest, 1, MPI_COMM_WORLD);
-MPI_Send(&a[offset][0], rows*N, MPI_DOUBLE,dest,1, MPI_COMM_WORLD);
-MPI_Send(&b, N*N, MPI_DOUBLE, dest, 1, MPI_COMM_WORLD);
-offset = offset + rows;
+    int i;
+    int j;
+    int prime;
+    int total = 0;
+
+    for ( i = 2 + id; i <= n; i += p )
+    {
+        prime = 1;
+        int limit = static_cast<int>(std::sqrt(i));
+        for ( j = 2; j <= limit; j++ )
+        {
+            if ( ( i % j ) == 0 )
+            {
+                prime = 0;
+                break;
+            }
+        }
+        total += prime;
+    }
+    return total;
 }
-/* wait for results from all worker tasks */
-for (i=1; i<=numworkers; i++)
+
+void timestamp()
 {
-source = i;
-MPI_Recv(&offset, 1, MPI_INT, source, 2, MPI_COMM_WORLD, &status);
-MPI_Recv(&rows, 1, MPI_INT, source, 2, MPI_COMM_WORLD, &status);
-MPI_Recv(&c[offset][0], rows*N, MPI_DOUBLE, source, 2, MPI_COMM_WORLD,
-&status);
-}
-//gettimeofday(&stop, 0);
-t2 = MPI_Wtime();
-printf("Here is the result matrix:\n");
-for (i=0; i<N; i++) {
-for (j=0; j<N; j++)
-printf("%6.2f ", c[i][j]);
-printf ("\n");
-}
-//fprintf(stdout,"Time = %.6f\n\n",(stop.tv_sec+stop.tv_usec*1e-6)-
-(start.tv_sec+start.tv_usec*1e-6));
-printf( "Elapsed time is %f\n", t2 - t1 );
-}
-/*---------------------------- worker----------------------------*/
-if (taskid > 0) {
-source = 0;
-MPI_Recv(&offset, 1, MPI_INT, source, 1, MPI_COMM_WORLD, &status);
-MPI_Recv(&rows, 1, MPI_INT, source, 1, MPI_COMM_WORLD, &status);
-MPI_Recv(&a, rows*N, MPI_DOUBLE, source, 1, MPI_COMM_WORLD, &status);
-MPI_Recv(&b, N*N, MPI_DOUBLE, source, 1, MPI_COMM_WORLD, &status);
-/* Matrix multiplication */
-for (k=0; k<N; k++)
-for (i=0; i<rows; i++) {
-c[i][k] = 0.0;
-for (j=0; j<N; j++)
-c[i][k] = c[i][k] + a[i][j] * b[j][k];
-}
-MPI_Send(&offset, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
-MPI_Send(&rows, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
-MPI_Send(&c, rows*N, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD);
-}
-MPI_Finalize();
+    std::time_t t = std::time(nullptr);
+    std::cout << std::put_time(std::localtime(&t), "%d %B %Y %I:%M:%S %p") << "\n";
 }
